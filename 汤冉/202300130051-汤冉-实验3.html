@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>数据可视化：柱状图 / 折线图</title>
+    <link rel="stylesheet" href="https://unpkg.com/x-data-spreadsheet@1.1.5/dist/xspreadsheet.css" />
+    <script src="https://unpkg.com/x-data-spreadsheet@1.1.5/dist/xspreadsheet.js"></script>
+    <script src="https://unpkg.com/x-data-spreadsheet@1.1.9/dist/locale/zh-cn.js"></script>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <style>
+        :root {
+            --sheetW: 380px;
+            --panelH: 460px;
+        }
+
+        /* 让“表格 + 图表”处在同一行 */
+        .row {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+
+        /* 左侧：表格区域（定宽） */
+        #sheet-wrap {
+            flex: 0 0 var(--sheetW);
+        }
+
+        #ctrl {
+            margin: 6px 0;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        }
+
+        #xspreadsheet {
+            width: var(--sheetW);
+            height: calc(var(--panelH) - 40px);
+            border: 1px solid #eee;
+        }
+
+        /* 右侧：图表区域（占用剩余空间） */
+        #my_dataviz {
+            flex: 1 1 0;
+            height: var(--panelH);
+            border: 1px solid #f2f2f2;
+        }
+
+        .line {
+            fill: none;
+            stroke-width: 2.5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="row">
+        <div id="sheet-wrap">
+            <div id="ctrl">
+                <label><input type="radio" name="chart-type" value="bar" checked> barchart</label>
+                <label style="margin-left:12px;"><input type="radio" name="chart-type" value="line"> linechart</label>
+            </div>
+            <div id="xspreadsheet"></div>
+        </div>
+        <div id="my_dataviz"></div>
+    </div>
+
+    <script>
+        x_spreadsheet.locale("zh-cn");
+        const xs = x_spreadsheet("#xspreadsheet", {
+            mode: 'edit',
+            showToolbar: true, showGrid: true, showContextmenu: true,
+            view: {
+                height: () => document.getElementById('xspreadsheet').clientHeight,
+                width: () => document.getElementById('xspreadsheet').clientWidth
+            },
+            row: { len: 15, height: 25 },
+            col: { len: 8, width: 100, indexWidth: 60, minWidth: 60 },
+            style: {
+                bgcolor: '#ffffff', align: 'left', valign: 'middle', textwrap: false,
+                strike: false, underline: false, color: '#0a0a0a',
+                font: { name: 'Helvetica', size: 10, bold: false, italic: false },
+            },
+        });
+
+        // 初始数据
+        xs.on('cell-edited', update);
+        xs.cellText(0, 1, "计算机").cellText(0, 2, "法学").reRender();
+        xs.cellText(1, 0, "2017").cellText(1, 1, "23").cellText(1, 2, "15").reRender();
+        xs.cellText(2, 0, "2018").cellText(2, 1, "36").cellText(2, 2, "26").reRender();
+        xs.cellText(3, 0, "2019").cellText(3, 1, "23").cellText(3, 2, "33").reRender();
+        xs.cellText(4, 0, "2020").cellText(4, 1, "22").cellText(4, 2, "10").reRender();
+
+        function getColor(i) {
+            const palette = ['#5ab1ef', '#ffb980', '#d87a80', '#2ec7c9', '#b6a2de', '#8d98b3', '#e5cf0d', '#97b552', '#95706d', '#dc69aa', '#07a2a4', '#9a7fd1', '#588dd5', '#f5994e', '#c05050', '#59678c', '#c9ab00', '#7eb00a', '#6f5553', '#c14089'];
+            return palette[i % palette.length];
+        }
+
+        function readSheet() {
+            let yTitle = [], xTitle = [], rows = 0, cols = 0, data = [];
+            for (let i = 1; i < 200; i++) {
+                const c = xs.cell(i, 0); if (!c || c.text === "") { rows = i; break; }
+                data.push([]); yTitle.push(c.text);
+            }
+            if (!rows) rows = yTitle.length + 1;
+            if (!yTitle.length) return { ok: false, msg: '首列缺少分组名（从第2行开始）' };
+            for (let j = 1; j < 200; j++) {
+                const c = xs.cell(0, j); if (!c || c.text === "") { cols = j; break; }
+                xTitle.push(c.text);
+            }
+            if (!cols) cols = xTitle.length + 1;
+            if (xTitle.length === 0) {
+                let cnt = 0; for (let j = 1; j < 200; j++) { const v = xs.cell(1, j)?.text; if (v === "" || v === undefined || isNaN(+v)) break; cnt++; }
+                if (!cnt) return { ok: false, msg: '无法自动识别系列列，请在第2行第2列起输入数字' };
+                for (let k = 0; k < cnt; k++) xTitle.push('系列' + (k + 1)); cols = cnt + 1;
+            }
+            for (let i = 1; i < rows; i++) {
+                for (let j = 1; j < cols; j++) {
+                    const c = xs.cell(i, j);
+                    if (!c || c.text === undefined || isNaN(+c.text)) return { ok: false, msg: `第 ${i + 1} 行第 ${j + 1} 列数据非法` };
+                    data[i - 1][j - 1] = +c.text;
+                }
+            }
+            return { ok: true, yTitle, xTitle, data };
+        }
+
+        function update() {
+            const type = document.querySelector('input[name="chart-type"]:checked').value;
+            const parsed = readSheet();
+            const myDiv = document.getElementById('my_dataviz');
+            // 容器宽高来自右侧flex剩余空间
+            const containerW = myDiv.clientWidth;
+            const containerH = myDiv.clientHeight;
+
+            d3.select("#my_dataviz").selectAll('svg').remove();
+            if (!parsed.ok) { alert(parsed.msg); return; }
+
+            const { yTitle, xTitle, data: matrix } = parsed;
+            let max = 0, data = [];
+            for (let i = 0; i < yTitle.length; i++) {
+                const row = { group: yTitle[i] };
+                for (let j = 0; j < xTitle.length; j++) { const v = matrix[i][j]; if (v > max) max = v; row[xTitle[j]] = v; }
+                data.push(row);
+            }
+
+            const margin = { top: 40, right: 160, bottom: 40, left: 50 };
+            const width = Math.max(280, containerW - margin.left - margin.right);
+            const height = Math.max(240, containerH - margin.top - margin.bottom);
+
+            const svg = d3.select("#my_dataviz").append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom);
+
+            const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scaleBand().domain(yTitle).range([0, width]).padding(0.22);
+            const y = d3.scaleLinear().domain([0, max * 1.12]).nice().range([height, 0]);
+            const xSub = d3.scaleBand().domain(xTitle).range([0, x.bandwidth()]).padding(0.18);
+
+            g.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+            g.append("g").call(d3.axisLeft(y));
+            g.append("g").call(d3.axisLeft(y).tickSize(-width).tickFormat("")).selectAll("line").attr("stroke", "#eee");
+
+            if (type === 'bar') {
+                const groupG = g.selectAll(".bar").data(data).join("g").attr("class", "bar").attr("transform", d => `translate(${x(d.group)},0)`);
+                groupG.selectAll("rect")
+                    .data(d => xTitle.map(k => ({ key: k, value: d[k] }))).join("rect")
+                    .attr("x", d => xSub(d.key)).attr("y", d => y(d.value))
+                    .attr("width", xSub.bandwidth()).attr("height", d => height - y(d.value))
+                    .attr("fill", (d, i) => getColor(i));
+                groupG.selectAll("text")
+                    .data(d => xTitle.map(k => ({ key: k, value: d[k] }))).join("text")
+                    .attr("x", d => xSub(d.key) + xSub.bandwidth() / 2).attr("y", d => y(d.value) - 8)
+                    .attr("text-anchor", "middle").text(d => d.value);
+            } else {
+                const line = d3.line().x(d => x(d.group) + x.bandwidth() / 2).y(d => y(d.value));
+                xTitle.forEach((name, si) => {
+                    const series = yTitle.map(gp => ({ group: gp, value: data.find(r => r.group === gp)[name] }));
+                    g.append("path").datum(series).attr("class", "line").attr("stroke", getColor(si)).attr("d", line);
+                    g.selectAll(".dot-" + si).data(series).join("circle")
+                        .attr("cx", d => x(d.group) + x.bandwidth() / 2).attr("cy", d => y(d.value)).attr("r", 3.5).attr("fill", getColor(si));
+                    g.selectAll(".label-" + si).data(series).join("text")
+                        .attr("x", d => x(d.group) + x.bandwidth() / 2).attr("y", d => y(d.value) - 10)
+                        .attr("text-anchor", "middle").attr("fill", "#333").text(d => d.value);
+                });
+            }
+
+            // 图例
+            const legendData = xTitle.map((n, i) => ({ name: n, color: getColor(i) }));
+            const legend = g.append("g").attr("class", "legend").attr("transform", `translate(${width + 20},0)`);
+            const li = legend.selectAll("g").data(legendData).join("g").attr("transform", (_, i) => `translate(0,${i * 22})`);
+            li.append("rect").attr("x", 0).attr("y", 6).attr("width", 36).attr("height", 10).attr("fill", d => d.color);
+            li.append("text").attr("x", 44).attr("y", 12).text(d => d.name);
+        }
+
+        // 单选切换 + 窗口缩放时都重绘，保持一行自适应
+        document.querySelectorAll('input[name="chart-type"]').forEach(el => el.addEventListener('change', update));
+        window.addEventListener('resize', update);
+
+        // 首次渲染
+        update();
+    </script>
+</body>
+
+</html>
