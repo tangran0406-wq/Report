@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>数据可视化：堆叠柱状图 / 堆叠面积图</title>
+    <link rel="stylesheet" href="https://unpkg.com/x-data-spreadsheet@1.1.5/dist/xspreadsheet.css" />
+    <script src="https://unpkg.com/x-data-spreadsheet@1.1.5/dist/xspreadsheet.js"></script>
+    <script src="https://unpkg.com/x-data-spreadsheet@1.1.9/dist/locale/zh-cn.js"></script>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <style>
+        :root {
+            --sheetW: 380px;
+            --panelH: 460px;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        .row {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+
+        #sheet-wrap {
+            flex: 0 0 var(--sheetW);
+        }
+
+        #ctrl {
+            margin: 6px 0;
+        }
+
+        #xspreadsheet {
+            width: var(--sheetW);
+            height: calc(var(--panelH) - 40px);
+            border: 1px solid #eee;
+        }
+
+        #my_dataviz {
+            flex: 1 1 0;
+            height: var(--panelH);
+            border: 1px solid #f2f2f2;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="row">
+        <div id="sheet-wrap">
+            <div id="ctrl">
+                <!-- 修改：更新图表类型和标签 -->
+                <label><input type="radio" name="chart-type" value="stacked-bar" checked> 堆叠柱状图</label>
+                <label style="margin-left:12px;"><input type="radio" name="chart-type" value="stacked-area"> 堆叠面积图</label>
+            </div>
+            <div id="xspreadsheet"></div>
+        </div>
+        <div id="my_dataviz"></div>
+    </div>
+
+    <script>
+        x_spreadsheet.locale("zh-cn");
+        const xs = x_spreadsheet("#xspreadsheet", {
+            mode: 'edit', showToolbar: true, showGrid: true, showContextmenu: true,
+            view: {
+                height: () => document.getElementById('xspreadsheet').clientHeight,
+                width: () => document.getElementById('xspreadsheet').clientWidth
+            },
+            row: { len: 15, height: 25 },
+            col: { len: 8, width: 100, indexWidth: 60, minWidth: 60 },
+        });
+
+        // 初始数据
+        xs.cellText(0, 1, "计算机").cellText(0, 2, "法学").reRender();
+        xs.cellText(1, 0, "2017").cellText(1, 1, "23").cellText(1, 2, "15").reRender();
+        xs.cellText(2, 0, "2018").cellText(2, 1, "36").cellText(2, 2, "26").reRender();
+        xs.cellText(3, 0, "2019").cellText(3, 1, "23").cellText(3, 2, "33").reRender();
+        xs.cellText(4, 0, "2020").cellText(4, 1, "22").cellText(4, 2, "10").reRender();
+
+        function getColor(i) {
+            const palette = ['#5ab1ef', '#ffb980', '#d87a80', '#2ec7c9', '#b6a2de'];
+            return palette[i % palette.length];
+        }
+
+        function readSheet() {
+            let yTitle = [], xTitle = [], rows = 0, cols = 0, data = [];
+            for (let i = 1; i < 200; i++) {
+                const c = xs.cell(i, 0); if (!c || !c.text) { rows = i; break; }
+                data.push([]); yTitle.push(c.text);
+            }
+            if (!rows) rows = yTitle.length + 1;
+            if (!yTitle.length) return { ok: false, msg: '首列缺少分组名' };
+            for (let j = 1; j < 200; j++) {
+                const c = xs.cell(0, j); if (!c || !c.text) { cols = j; break; }
+                xTitle.push(c.text);
+            }
+            if (!cols) cols = xTitle.length + 1;
+            if (xTitle.length === 0) return { ok: false, msg: '首行缺少系列名' };
+            for (let i = 1; i < rows; i++) {
+                for (let j = 1; j < cols; j++) {
+                    const c = xs.cell(i, j);
+                    if (!c || c.text === undefined || isNaN(+c.text)) return { ok: false, msg: `数据错误 at (${i + 1}, ${j + 1})` };
+                    data[i - 1][j - 1] = +c.text;
+                }
+            }
+            return { ok: true, yTitle, xTitle, data };
+        }
+
+        function update() {
+            const type = document.querySelector('input[name="chart-type"]:checked').value;
+            const parsed = readSheet();
+            const myDiv = document.getElementById('my_dataviz');
+            const containerW = myDiv.clientWidth;
+            const containerH = myDiv.clientHeight;
+
+            d3.select("#my_dataviz").selectAll('svg').remove();
+            if (!parsed.ok) { alert(parsed.msg); return; }
+
+            const { yTitle, xTitle, data: matrix } = parsed;
+            const data = yTitle.map((group, i) => {
+                const row = { group };
+                xTitle.forEach((key, j) => { row[key] = matrix[i][j]; });
+                return row;
+            });
+
+
+            const stack = d3.stack().keys(xTitle);
+            const stackedData = stack(data);
+
+            const yMax = d3.max(stackedData, d => d3.max(d, item => item[1]));
+
+            const margin = { top: 40, right: 120, bottom: 40, left: 50 };
+            const width = Math.max(280, containerW - margin.left - margin.right);
+            const height = Math.max(240, containerH - margin.top - margin.bottom);
+
+            const svg = d3.select("#my_dataviz").append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom);
+
+            const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scaleBand().domain(yTitle).range([0, width]).padding(0.25);
+            const y = d3.scaleLinear().domain([0, yMax * 1.15]).nice().range([height, 0]);
+
+            g.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+            g.append("g").call(d3.axisLeft(y));
+            g.append("g").call(d3.axisLeft(y).tickSize(-width).tickFormat("")).selectAll("line").attr("stroke", "#eee").attr("stroke-dasharray", "2,2");
+
+
+
+            if (type === 'stacked-bar') {
+                g.selectAll(".stack-group")
+                    .data(stackedData)
+                    .join("g")
+                    .attr("class", "stack-group")
+                    .attr("fill", (d, i) => getColor(i))
+                    .selectAll("rect")
+                    .data(d => d)
+                    .join("rect")
+                    .attr("x", d => x(d.data.group))
+                    .attr("y", d => y(d[1])) // 柱子的顶边
+                    .attr("height", d => y(d[0]) - y(d[1])) // 柱子的高度 = 底边 - 顶边
+                    .attr("width", x.bandwidth());
+            } 
+            
+            else if (type === 'stacked-area') {
+                const area = d3.area()
+                    .x(d => x(d.data.group) + x.bandwidth() / 2) // 面积图的点在band中心
+                    .y0(d => y(d[0])) // 面积的下边界
+                    .y1(d => y(d[1])); // 面积的上边界
+
+                g.selectAll(".area-layer")
+                    .data(stackedData)
+                    .join("path")
+                    .attr("class", "area-layer")
+                    .attr("fill", (d, i) => getColor(i))
+                    .attr("d", area);
+            }
+
+            
+            const legendData = xTitle.map((n, i) => ({ name: n, color: getColor(i) }));
+            const legend = g.append("g").attr("transform", `translate(${width + 20},0)`);
+            const li = legend.selectAll("g").data(legendData).join("g").attr("transform", (_, i) => `translate(0,${i * 22})`);
+            li.append("rect").attr("y", 6).attr("width", 20).attr("height", 10).attr("fill", d => d.color);
+            li.append("text").attr("x", 28).attr("y", 15).style("font-size", "14px").text(d => d.name);
+        }
+
+        
+        xs.on('cell-edited', update);
+        document.querySelectorAll('input[name="chart-type"]').forEach(el => el.addEventListener('change', update));
+        window.addEventListener('resize', update);
+
+        
+        update();
+    </script>
+</body>
+
+</html>
