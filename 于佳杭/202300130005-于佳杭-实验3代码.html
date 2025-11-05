@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X-Spreadsheet with D3.js Visualization</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/x-data-spreadsheet@1.1.5/dist/xspreadsheet.css" />
+    <script src="https://unpkg.com/x-data-spreadsheet@1.1.5/dist/xspreadsheet.js"></script>
+    <script src="https://unpkg.com/x-data-spreadsheet@1.1.9/dist/locale/zh-cn.js"></script>
+    <script src="https://d3js.org/d3.v6.js"></script>
+    
+    <style>
+        body {
+            display: flex;
+            padding: 20px;
+        }
+        #spreadsheet-container {
+            padding: 0;
+            margin: 0;
+        }
+        #xspreadsheet {
+            width: 500px;
+            height: 400px;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+        #my_dataviz {
+            width: 700px;
+            height: 500px;
+            padding: 0;
+            margin-left: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="spreadsheet-container">
+        <div>
+            <input type="checkbox" class="checkbox" value="barchart" id="vis-checkbox" />
+            <label for="vis-checkbox">barchart</label>
+        </div>
+        <div id="xspreadsheet"></div>
+    </div>
+
+    <div id="my_dataviz"></div>
+
+    <script>
+        // 设置语言为中文
+        x_spreadsheet.locale("zh-cn");
+
+        // 初始化电子表格
+        const xs = x_spreadsheet("#xspreadsheet", {
+            mode: 'edit', // edit | read
+            showToolbar: true,
+            showGrid: true,
+            showContextmenu: true,
+            view: {
+                height: () => document.getElementById("xspreadsheet").clientHeight,
+                width: () => document.getElementById("xspreadsheet").clientWidth,
+            },
+            row: {
+                len: 15,
+                height: 25,
+            },
+            col: {
+                len: 8,
+                width: 100,
+                indexWidth: 60,
+                minWidth: 60,
+            },
+            style: {
+                bgcolor: '#ffffff',
+                align: 'left',
+                valign: 'middle',
+                textwrap: false,
+                strike: false,
+                underline: false,
+                color: '#0a0a0a',
+                font: {
+                    name: 'Helvetica',
+                    size: 10,
+                    bold: false,
+                    italic: false,
+                },
+            },
+        });
+
+        // 设置表格初始数据
+        xs.cellText(0, 1, "计算机").cellText(0, 2, "法学").reRender();
+        xs.cellText(1, 0, "2017").cellText(1, 1, "23").cellText(1, 2, "15").reRender();
+        xs.cellText(2, 0, "2018").cellText(2, 1, "36").cellText(2, 2, "26").reRender();
+        xs.cellText(3, 0, "2019").cellText(3, 1, "23").cellText(3, 2, "33").reRender();
+        xs.cellText(4, 0, "2020").cellText(4, 1, "22").cellText(4, 2, "10").reRender();
+        
+        // 绑定事件：当单元格被编辑时，调用 update 函数
+        xs.on('cell-edited', update);
+
+        // 绑定事件：当复选框状态改变时，调用 update 函数
+        d3.selectAll(".checkbox").on("change", update);
+
+        // 颜色生成函数
+        function getColor(idx) {
+            const palette = [
+                '#5ab1ef', '#ffb980', '#d87a80', '#2ec7c9', '#b6a2de',
+                '#8d98b3', '#e5cf0d', '#97b552', '#95706d', '#dc69aa',
+                '#07a2a4', '#9a7fd1', '#588dd5', '#f5994e', '#c05050',
+                '#59678c', '#c9ab00', '#7eb00a', '#6f5553', '#c14089'
+            ];
+            return palette[idx % palette.length];
+        }
+
+        // 核心更新函数：读取数据并绘制图表
+        function update() {
+            const checkbox = d3.select('.checkbox');
+
+            // 检查复选框是否被选中
+            if (checkbox.property("checked")) {
+                let data = [];
+                let yTitle = [];
+                let xTitle = [];
+                let rows = 0;
+                let cols = 0;
+
+                // 读取行标题 (Y轴分组)
+                for (let i = 1; i < 20; i++) {
+                    const cell = xs.cell(i, 0);
+                    if (cell === null || cell.text === undefined || cell.text === "") {
+                        rows = i;
+                        break;
+                    }
+                    yTitle.push(cell.text);
+                }
+
+                // 读取列标题 (X轴子分组)
+                for (let i = 1; i < 20; i++) {
+                    const cell = xs.cell(0, i);
+                    if (cell === null || cell.text === undefined || cell.text === "") {
+                        cols = i;
+                        break;
+                    }
+                    xTitle.push(cell.text);
+                }
+                
+                // 读取数据
+                let max_val = 0;
+                let processedData = [];
+                for (let i = 1; i < rows; i++) {
+                    let rowData = { group: yTitle[i - 1] };
+                    for (let j = 1; j < cols; j++) {
+                        const cell = xs.cell(i, j);
+                        if (cell === null || cell.text === undefined || isNaN(+cell.text)) {
+                            console.error(`Error data format at cell (${i}, ${j})`);
+                            // d3.selectAll('svg').remove(); // 清空图表避免显示错误
+                            // return; // 发现错误数据时提前退出
+                            continue; // 或者跳过这个单元格
+                        }
+                        const value = +cell.text;
+                        rowData[xTitle[j - 1]] = value;
+                        if (value > max_val) {
+                            max_val = value;
+                        }
+                    }
+                    processedData.push(rowData);
+                }
+                
+                // --- D3.js 绘图代码 ---
+                const margin = { top: 40, right: 30, bottom: 40, left: 50 };
+                const width = 600 - margin.left - margin.right;
+                const height = 500 - margin.top - margin.bottom;
+
+                // 绘制前清空旧的SVG
+                d3.selectAll('svg').remove();
+                
+                const svg = d3.select("#my_dataviz")
+                    .append("svg")
+                    .attr("width", width + margin.left + margin.right + 100)
+                    .attr("height", height + margin.top + margin.bottom)
+                    .append("g")
+                    .attr("transform", `translate(${margin.left},${margin.top})`);
+                
+                const subgroups = xTitle;
+                const groups = yTitle;
+
+                // X 轴 (主分组)
+                const x = d3.scaleBand()
+                    .domain(groups)
+                    .range([0, width])
+                    .padding([0.2]);
+                
+                svg.append("g")
+                    .attr("transform", `translate(0, ${height})`)
+                    .call(d3.axisBottom(x).tickSizeOuter(0));
+
+                // Y 轴
+                const y = d3.scaleLinear()
+                    .domain([0, max_val]).nice()
+                    .range([height, 0]);
+
+                svg.append("g").call(d3.axisLeft(y));
+
+                // X 轴 (子分组)
+                const xSubgroup = d3.scaleBand()
+                    .domain(subgroups)
+                    .range([0, x.bandwidth()])
+                    .padding([0.05]);
+                
+                // 绘制矩形条
+                svg.append("g")
+                    .selectAll("g")
+                    .data(processedData)
+                    .join("g")
+                    .attr("transform", d => `translate(${x(d.group)}, 0)`)
+                    .selectAll("rect")
+                    .data(d => subgroups.map(key => ({ key: key, value: d[key] })))
+                    .join("rect")
+                    .attr("x", d => xSubgroup(d.key))
+                    .attr("y", d => y(d.value))
+                    .attr("width", xSubgroup.bandwidth())
+                    .attr("height", d => height - y(d.value))
+                    .attr("fill", (d, i) => getColor(i));
+
+                // 在矩形条上方添加数值标签
+                svg.append("g")
+                    .selectAll("g")
+                    .data(processedData)
+                    .join("g")
+                    .attr("transform", d => `translate(${x(d.group)}, 0)`)
+                    .selectAll("text")
+                    .data(d => subgroups.map(key => ({ key: key, value: d[key] })))
+                    .join("text")
+                    .attr("x", d => xSubgroup(d.key) + xSubgroup.bandwidth() / 2)
+                    .attr("y", d => y(d.value) - 5)
+                    .text(d => d.value)
+                    .attr('text-anchor', 'middle')
+                    .attr('font-size', '10px');
+
+                // 绘制图例
+                const legendData = subgroups.map((d, i) => ({ name: d, color: getColor(i) }));
+                const legend = svg.selectAll(".legend")
+                    .data(legendData)
+                    .enter()
+                    .append("g")
+                    .attr("class", "legend")
+                    .attr("transform", (d, i) => `translate(60, ${i * 20})`);
+
+                legend.append("rect")
+                    .attr("x", width)
+                    .attr("width", 18)
+                    .attr("height", 18)
+                    .style("fill", d => d.color);
+
+                legend.append("text")
+                    .attr("x", width + 24)
+                    .attr("y", 9)
+                    .attr("dy", ".35em")
+                    .style("text-anchor", "start")
+                    .text(d => d.name);
+
+            } else {
+                // 如果复选框未选中，则移除图表
+                d3.selectAll('svg').remove();
+            }
+        }
+    </script>
+</body>
+</html>
