@@ -1,0 +1,47 @@
+{
+    "constants": [
+        {
+        "name": "durationTime",
+        "value": 400
+        },
+        {
+        "name": "delayTime",
+        "value": 100
+        }
+    ],
+    "charts": [
+        {
+        "source": "./charts/mushrooms.dsvg"
+        }
+    ],
+    "animations": [
+        {
+        "selector": ".symbol",
+        "grouping": {
+            "groupBy": "Surface",
+            "reference": "start with previous", 
+            "sort": {
+            "order": [ "Smooth", "Scaly", "Fibrous" ]
+            },
+            "grouping": {
+            "groupBy": "Odor",
+            "reference": "start after previous",
+            "delay": "delayTime",
+            "sort": {
+                "order": [
+                "Almond", "Anise", "Creosote", "Fishy",
+                "Foul", "None", "Pungent", "Spicy"
+                ]
+            }
+            }
+        },
+        "effects": [
+            {
+            "type": "grow",
+            "easing": "easeOutBounce",
+            "duration": "durationTime"
+            }
+        ]
+        }
+    ]
+}
